@@ -6,13 +6,10 @@ module addr::governance {
     use std::timestamp;
     use std::error;
     use aptos_framework::coin::{Self, Coin};
-    use aptos_framework::aptos_coin::AptosCoin;
+    use aptos_framework::aptos_coin::{Self as aptos_coin, AptosCoin};
     use aptos_framework::table::{Self, Table};
-    use aptos_framework::object::{Self, Object, ObjectCore};
     use aptos_framework::event::{Self, EventHandle};
     use aptos_framework::account;
-    use aptos_framework::resource_account;
-    use aptos_framework::code;
 
     // Error codes
     const E_NOT_INITIALIZED: u64 = 1;
@@ -60,6 +57,7 @@ module addr::governance {
         total_voting_power: u64,
         upgrade_authority: Option<address>,
         // Events
+        dao_initialized_events: EventHandle<DaoInitializedEvent>,
         proposal_created_events: EventHandle<ProposalCreatedEvent>,
         vote_cast_events: EventHandle<VoteCastEvent>,
         proposal_executed_events: EventHandle<ProposalExecutedEvent>,
@@ -147,6 +145,10 @@ module addr::governance {
     }
 
     // Events
+    struct DaoInitializedEvent has drop, store {
+        dao_address: address,
+        timestamp: u64,
+    }
     struct ProposalCreatedEvent has drop, store {
         proposal_id: u64,
         proposer: address,
@@ -213,6 +215,7 @@ module addr::governance {
             proposal_counter: 0,
             total_voting_power: 0,
             upgrade_authority: option::some(account_addr),
+            dao_initialized_events: account::new_event_handle<DaoInitializedEvent>(account),
             proposal_created_events: account::new_event_handle<ProposalCreatedEvent>(account),
             vote_cast_events: account::new_event_handle<VoteCastEvent>(account),
             proposal_executed_events: account::new_event_handle<ProposalExecutedEvent>(account),
@@ -231,6 +234,12 @@ module addr::governance {
             proposals: table::new(),
             votes: table::new(),
         };
+
+        // Emit DAO initialized event before moving the resource
+        event::emit_event(&mut dao.dao_initialized_events, DaoInitializedEvent {
+            dao_address: account_addr,
+            timestamp: timestamp::now_seconds(),
+        });
 
         move_to(account, dao);
         move_to(account, delegation_map);
@@ -318,6 +327,9 @@ module addr::governance {
         assert!(now <= proposal.end_time, error::invalid_state(E_VOTING_ENDED));
         assert!(proposal.state == PROPOSAL_STATE_ACTIVE, error::invalid_state(E_INVALID_PROPOSAL));
 
+        // Validate support choice
+        assert!(support <= 2, error::invalid_argument(E_INVALID_PROPOSAL));
+
         // Get effective voting power (including delegations)
         let effective_voting_power = get_effective_voting_power(voting_power_map, delegation_map, voter);
         assert!(effective_voting_power > 0, error::permission_denied(E_INSUFFICIENT_VOTING_POWER));
@@ -357,7 +369,10 @@ module addr::governance {
             proposal.abstain_votes = proposal.abstain_votes + adjusted_power;
         };
 
-        table::upsert(proposal_votes, voter, vote);
+        if (table::contains(proposal_votes, voter)) {
+            let _ = table::remove(proposal_votes, voter);
+        };
+        table::add(proposal_votes, voter, vote);
 
         // Emit event
         event::emit_event(&mut dao.vote_cast_events, VoteCastEvent {
@@ -425,14 +440,19 @@ module addr::governance {
         assert!(!proposal.executed, error::invalid_state(E_PROPOSAL_ALREADY_EXECUTED));
         assert!(!proposal.vetoed, error::invalid_state(E_PROPOSAL_VETOED));
 
-        // Execute proposal actions
+        // Execute proposal actions: support simple AptosCoin transfers from treasury
         let i = 0;
         let actions_len = vector::length(&proposal.actions);
         while (i < actions_len) {
             let action = vector::borrow(&proposal.actions, i);
-            // In a real implementation, you would execute the action here
-            // This might involve calling other modules, transferring funds, etc.
-            // For this example, we'll just mark it as executed
+            if (action.value > 0) {
+                // Ensure treasury has enough balance then transfer
+                let current_balance = coin::value(&dao.treasury.aptos_balance);
+                assert!(current_balance >= action.value, error::invalid_state(E_INVALID_PROPOSAL));
+                let payout = coin::split(&mut dao.treasury.aptos_balance, action.value);
+                aptos_coin::deposit(action.target, payout);
+            };
+            // function_name/args are placeholders for future extensibility
             i = i + 1;
         };
 
@@ -481,7 +501,10 @@ module addr::governance {
         assert!(exists<DelegationMap>(dao_address), error::not_found(E_NOT_INITIALIZED));
 
         let delegation_map = borrow_global_mut<DelegationMap>(dao_address);
-        table::upsert(&mut delegation_map.delegations, delegator, delegate);
+        if (table::contains(&delegation_map.delegations, delegator)) {
+            let _ = table::remove(&mut delegation_map.delegations, delegator);
+        };
+        table::add(&mut delegation_map.delegations, delegator, delegate);
     }
 
     /// Set voting power for an address (typically called by token contract)
@@ -504,7 +527,10 @@ module addr::governance {
         let old_power = get_voting_power(voting_power_map, voter);
         dao.total_voting_power = dao.total_voting_power - old_power + power;
         
-        table::upsert(&mut voting_power_map.power, voter, power);
+        if (table::contains(&voting_power_map.power, voter)) {
+            let _ = table::remove(&mut voting_power_map.power, voter);
+        };
+        table::add(&mut voting_power_map.power, voter, power);
     }
 
     /// Deposit funds to treasury
