@@ -1,3 +1,15 @@
+/// Governance module providing a general‑purpose DAO for Aptos.
+///
+/// Capabilities:
+/// - Initialize a DAO with configurable voting period, timelock, quorum
+/// - Create proposals with optional AptosCoin payouts from treasury
+/// - Cast votes using different strategies (simple majority by default)
+/// - Queue and execute proposals after timelock
+/// - Optional veto authority
+///
+/// Notes:
+/// - This reference focuses on clarity and composability over breadth.
+/// - Treasury currently supports AptosCoin only for simplicity.
 module addr::governance {
     use std::signer;
     use std::vector;
@@ -74,7 +86,7 @@ module addr::governance {
         veto_authority: Option<address>,
     }
 
-    /// Treasury holding multi-asset vault
+    /// Treasury holding multi-asset vault (AptosCoin only for now)
     struct Treasury has store {
         aptos_balance: Coin<AptosCoin>,
         // Table for other coin types - in production, you'd use a more sophisticated approach
@@ -171,7 +183,9 @@ module addr::governance {
         timestamp: u64,
     }
 
-    /// Initialize a new DAO
+    /// Initialize a new DAO with full configuration.
+    ///
+    /// Access: any account can initialize a DAO at their address.
     public entry fun initialize_dao(
         account: &signer,
         name: String,
@@ -247,7 +261,31 @@ module addr::governance {
         move_to(account, proposal_storage);
     }
 
-    /// Create a new proposal
+    /// Convenience initializer with sensible defaults.
+    ///
+    /// Defaults:
+    /// - voting_period = MIN_VOTING_PERIOD (1 day)
+    /// - timelock_delay = MIN_TIMELOCK_DELAY (1 hour)
+    /// - quorum_threshold = 2500 (25%)
+    /// - proposal_threshold = 1
+    /// - voting_strategy = simple majority
+    /// - veto disabled
+    public entry fun initialize_simple(account: &signer, name: String) {
+        initialize_dao(
+            account,
+            name,
+            MIN_VOTING_PERIOD,
+            MIN_TIMELOCK_DELAY,
+            2500,
+            1,
+            STRATEGY_SIMPLE_MAJORITY,
+            false,
+            option::none<address>(),
+        );
+    }
+
+    /// Create a new proposal.
+    /// Requires: proposer has voting power >= `proposal_threshold`.
     public entry fun create_proposal(
         account: &signer,
         dao_address: address,
@@ -303,7 +341,8 @@ module addr::governance {
         });
     }
 
-    /// Cast a vote on a proposal
+    /// Cast a vote on a proposal.
+    /// `support` in {0=against,1=for,2=abstain}.
     public entry fun cast_vote(
         account: &signer,
         dao_address: address,
@@ -384,7 +423,7 @@ module addr::governance {
         });
     }
 
-    /// Queue a succeeded proposal for execution
+    /// Queue a succeeded proposal for execution (applies timelock).
     public entry fun queue_proposal(
         account: &signer,
         dao_address: address,
@@ -418,7 +457,7 @@ module addr::governance {
         };
     }
 
-    /// Execute a queued proposal
+    /// Execute a queued proposal after timelock expiration.
     public entry fun execute_proposal(
         account: &signer,
         dao_address: address,
@@ -467,7 +506,7 @@ module addr::governance {
         });
     }
 
-    /// Veto a proposal (only by veto authority)
+    /// Veto a proposal (only by veto authority when enabled).
     public entry fun veto_proposal(
         account: &signer,
         dao_address: address,
@@ -491,7 +530,7 @@ module addr::governance {
         proposal.state = PROPOSAL_STATE_VETOED;
     }
 
-    /// Delegate voting power to another address
+    /// Delegate voting power to another address.
     public entry fun delegate_voting_power(
         account: &signer,
         dao_address: address,
@@ -507,7 +546,7 @@ module addr::governance {
         table::add(&mut delegation_map.delegations, delegator, delegate);
     }
 
-    /// Set voting power for an address (typically called by token contract)
+    /// Set voting power for an address (typically called by token contract).
     public entry fun set_voting_power(
         account: &signer,
         dao_address: address,

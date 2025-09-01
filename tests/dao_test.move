@@ -12,10 +12,10 @@ module addr::dao_test {
     #[test]
     fun initialize_and_propose() {
         let admin = @0xA11CE;
-        account::create_account(admin);
+        let admin_signer = account::create_signer_for_test(admin);
 
         governance::initialize_dao(
-            &account::borrow_signer(admin),
+            &admin_signer,
             string::utf8(b"Test DAO"),
             86400,
             3600,
