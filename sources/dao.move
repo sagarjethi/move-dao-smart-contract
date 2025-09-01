@@ -1,15 +1,8 @@
-/// Governance module providing a general‑purpose DAO for Aptos.
-///
-/// Capabilities:
-/// - Initialize a DAO with configurable voting period, timelock, quorum
-/// - Create proposals with optional AptosCoin payouts from treasury
-/// - Cast votes using different strategies (simple majority by default)
-/// - Queue and execute proposals after timelock
-/// - Optional veto authority
-///
-/// Notes:
-/// - This reference focuses on clarity and composability over breadth.
-/// - Treasury currently supports AptosCoin only for simplicity.
+/// Aptos DAO smart contract (Move) for decentralized governance.
+/// Keywords: Aptos DAO, Aptos governance, Move smart contract, DAO development,
+/// proposals, voting, quorum, timelock, treasury, veto.
+/// Provides DAO initialization, proposal creation, voting with strategies,
+/// quorum checks, timelock queueing, and execution with AptosCoin payouts.
 module addr::governance {
     use std::signer;
     use std::vector;
